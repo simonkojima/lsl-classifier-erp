@@ -1,0 +1,8 @@
+build/
+dist/
+lsl-classifier-erp.egg-info/
+__pycache__
+_build
+_static
+_templates
+*.pyc
