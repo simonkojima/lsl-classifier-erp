@@ -11,9 +11,9 @@ sys.path.append(pyerp_dir)
 import pyerp
 
 ip_address = socket.gethostbyname(socket.gethostname())
-port = 49154
+port = 49155
 length_header = 64
-length_chunk = 2**10
+length_chunk = 2**12
 
 log_dir = os.path.join(os.path.expanduser('~'), "log", "lsl-classifier-erp")
 
