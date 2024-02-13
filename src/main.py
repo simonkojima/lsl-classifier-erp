@@ -4,6 +4,7 @@ import socket
 import datetime
 import json
 import traceback
+import threading
 
 import numpy as np
 
@@ -43,12 +44,13 @@ def train_classifier(clf, vectorizer, epochs, events, event_id):
 def classification_main(conn, length_header, length_chunk, clf, vectorizer, event_id):    
     flag = [True]
     distances = dict()
-    for event in event_id['nontarget']:
+    for event in event_id:
         distances[event] = list()
     print(distances)
     while flag[0]:
         try:
             while True:
+
 
                 data = conn.recv(length_header)
                 msg_length = int.from_bytes(data, 'little')
@@ -117,14 +119,14 @@ def classification_main(conn, length_header, length_chunk, clf, vectorizer, even
             logger.debug(traceback.format_exc())
             flag[0] = False
 
-
 def main(ip_address,
          port,
          length_header,
          length_chunk,
          clf,
          vectorizer,
-         event_id):
+         event_id_train,
+         event_id_online):
     
     logger = logging.getLogger(__name__)
 
@@ -135,8 +137,8 @@ def main(ip_address,
     server.listen()
     #server.settimeout(0)
     conn, addr = server.accept()
+    conn.setblocking(True)
     logger.debug("New socket connection was established. '%s'"%str(addr))
-    
     
     flag = [True]
     #conn.settimeout(0)
@@ -157,7 +159,7 @@ def main(ip_address,
                     print(len(msg))
                     msg_json = json.loads(msg)
                     print(msg_json.keys())
-                    train_classifier(clf, vectorizer, msg_json['epochs'], msg_json['events'], event_id)
+                    train_classifier(clf, vectorizer, msg_json['epochs'], msg_json['events'], event_id_train)
                     msg_json = dict()
                     msg_json['type'] = 'info'
                     msg_json['info'] = 'training_completed'
@@ -174,13 +176,13 @@ def main(ip_address,
                                                     length_chunk,
                                                     clf,
                                                     vectorizer,
-                                                    event_id)
+                                                    event_id_online)
                     distance_mean = list()
-                    for idx, event in enumerate(event_id['nontarget']):
+                    for idx, event in enumerate(event_id_online):
                         distance_mean.append(np.mean(distances[event]))
                     print(distance_mean)
                     I = np.argmax(distance_mean)
-                    pred = event_id['nontarget'][I]
+                    pred = event_id_online[I]
                     
                     print(pred)
                     
@@ -200,6 +202,9 @@ def main(ip_address,
             pass
         except KeyboardInterrupt as e:
             exit()
+        except socket.error as e:
+            print(e)
+            logger.debug(traceback.format_exc())
         except Exception as e:
             logger.debug(traceback.format_exc())
             flag[0] = False
@@ -207,7 +212,7 @@ def main(ip_address,
 if __name__ == "__main__":
 
     import conf
-    log_dir = os.path.join(os.path.expanduser('~'), "log", "lsl-epoching")
+    log_dir = os.path.join(os.path.expanduser('~'), "log", "lsl-classifier")
 
     log_strftime = "%y-%m-%d"
     datestr =  datetime.datetime.now().strftime(log_strftime) 
@@ -230,4 +235,5 @@ if __name__ == "__main__":
          conf.length_chunk,
          conf.clf,
          conf.vectorizer,
-         conf.event_id)
+         conf.event_id,
+         conf.event_id_online)
