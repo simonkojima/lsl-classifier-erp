@@ -111,11 +111,29 @@ def main(ip_address,
     while flag[0]:
         try:
             data = server.recv(names = [client_name])[0]
+            logger.debug("recieved.")
             msg_json = json.loads(data.decode('utf-8'))
+            logger.debug("json was parsed")
 
             if msg_json['type'] == 'cmd':
                 if msg_json['cmd'] == 'train':
-                    train_classifier(clf, vectorizer, msg_json['epochs'], msg_json['events'], event_id_train)
+                    logger.debug("training started")
+                    #
+                    epochs = list()
+                    events = list()
+                    with open("sub-simon_epochs_training_task-asme_run-1.json", 'r') as f:
+                        data = json.load(f)
+
+                    for epoch in data['epochs']:
+                        epochs += epoch
+                        
+                    for event in data['events']:
+                        events += event
+
+                    #
+                    #train_classifier(clf, vectorizer, msg_json['epochs'], msg_json['events'], event_id_train)
+                    train_classifier(clf, vectorizer, epochs, events, event_id_train)
+                    logger.debug("training completed")
 
                     msg_json = dict()
                     msg_json['type'] = 'info'
