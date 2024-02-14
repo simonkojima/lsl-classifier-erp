@@ -4,8 +4,8 @@ import socket
 import datetime
 import json
 import traceback
-import threading
 
+import pyicom as icom
 import numpy as np
 
 from utils.std import mkdir
@@ -23,8 +23,6 @@ def train_classifier(clf, vectorizer, epochs, events, event_id):
 
     epochs = np.array(epochs)
     
-    print(epochs.shape)
-    
     Y = list()
     for event in  events:
         if event in event_id['target']:
@@ -33,74 +31,45 @@ def train_classifier(clf, vectorizer, epochs, events, event_id):
             Y.append(0)
         else:
             raise ValueError("Unknown event. '%s'"%(str(event)))
-    print(events)
-    print(Y)
     
     X = vectorizer.transform(epochs)
-    print(X.shape)
     
     clf.fit(X,Y)
 
-def classification_main(conn, length_header, length_chunk, clf, vectorizer, event_id):    
+def classification_main(icom_server,
+                        client_name,
+                        length_header,
+                        length_chunk,
+                        clf,
+                        vectorizer,
+                        event_id):    
     flag = [True]
     distances = dict()
     for event in event_id:
         distances[event] = list()
-    print(distances)
+
     while flag[0]:
         try:
             while True:
-
-
-                data = conn.recv(length_header)
-                msg_length = int.from_bytes(data, 'little')
-                msg = conn.recv(msg_length).decode('utf-8')
-                data = json.loads(msg)
+                data = icom_server.recv(names = [client_name])[0]
+                data = json.loads(data.decode('utf-8'))
 
                 if data['type'] == "epochs":
-                    data = conn.recv(length_header)
-                    msg_length = int.from_bytes(data, 'little')
-                    print(msg_length)
-                    msg = recv_sock_split(conn, msg_length, length_chunk)
-                    data = json.loads(msg)
-                    print(data.keys())
                     epochs = data['epochs']
                     events = data['events']
-                    
-                    print(events)
-                    print(len(epochs))
                     for idx, epoch in enumerate(epochs):
-                        print(events[idx])
                         epoch = np.atleast_3d(np.array(epoch))
                         epoch = np.transpose(epoch, (2,0,1))
-                        print(epoch.shape)
                         X = vectorizer.transform(epoch)
                         val = clf.decision_function(X)
                         distances[events[idx]].append(val)
                 elif data['type'] == 'cmd':
                     if data['cmd'] == 'trial-end':
                         logger.debug("trial end")
-                        #flag[0] = False
                         return distances
                 else:
                     logger.error("data['type']: %s was received"%str(data['type']))
                     continue
-            flag[0] = False
-            continue
-            
-            msg = recv_sock_split(conn, msg_length, length_chunk)
-            print(len(msg))
-            msg_json = json.loads(msg)
-            print(msg_json.keys())
-            
-            flag[0] = False
-
-            
-            msg_json = conn.recv(msg_length).decode('utf-8')
-
-            print(msg_json)
-            msg_json = json.loads(msg_json)
-            print(msg_length)
 
         except socket.timeout as e:
             print(e)
@@ -121,6 +90,7 @@ def classification_main(conn, length_header, length_chunk, clf, vectorizer, even
 
 def main(ip_address,
          port,
+         client_name,
          length_header,
          length_chunk,
          clf,
@@ -129,49 +99,38 @@ def main(ip_address,
          event_id_online):
     
     logger = logging.getLogger(__name__)
-
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((ip_address, port))
+    
+    server = icom.server(ip = ip_address, port = port)
+    server.start()
     print("server info. ip: %s, port: %s"%(str(ip_address), str(port)))
-
-    server.listen()
-    #server.settimeout(0)
-    conn, addr = server.accept()
-    conn.setblocking(True)
-    logger.debug("New socket connection was established. '%s'"%str(addr))
+    logger.debug("server info. ip: %s, port: %s"%(str(ip_address), str(port)))
+    while len(server.conns) == 0:
+        pass
     
     flag = [True]
-    #conn.settimeout(0)
     while flag[0]:
         try:
-            data = conn.recv(length_header)
-            msg_length = int.from_bytes(data, 'little')
-            msg_json = conn.recv(msg_length).decode('utf-8')
-            print(msg_json)
-            msg_json = json.loads(msg_json)
-            print(msg_length)
+            data = server.recv(names = [client_name])[0]
+            msg_json = json.loads(data.decode('utf-8'))
 
             if msg_json['type'] == 'cmd':
                 if msg_json['cmd'] == 'train':
-                    data = conn.recv(length_header)
-                    msg_length = int.from_bytes(data, 'little')
-                    msg = recv_sock_split(conn, msg_length, length_chunk)
-                    print(len(msg))
-                    msg_json = json.loads(msg)
-                    print(msg_json.keys())
                     train_classifier(clf, vectorizer, msg_json['epochs'], msg_json['events'], event_id_train)
+
                     msg_json = dict()
                     msg_json['type'] = 'info'
                     msg_json['info'] = 'training_completed'
 
                     data = json.dumps(msg_json).encode('utf-8')
-                    msg_length = len(data)
-                    print(msg_length)
-                    conn.send(msg_length.to_bytes(conf.length_header, byteorder='little'))
-                    conn.send(data)
+                    server.send(data, names=[client_name])
+                    
+                    logger.debug("training_completed")
+                    
                 elif msg_json['cmd'] == 'trial-start':
                     print("trial is started")
-                    distances = classification_main(conn,
+                    logger.debug("trial is started")
+                    distances = classification_main(server,
+                                                    client_name,
                                                     length_header,
                                                     length_chunk,
                                                     clf,
@@ -180,11 +139,8 @@ def main(ip_address,
                     distance_mean = list()
                     for idx, event in enumerate(event_id_online):
                         distance_mean.append(np.mean(distances[event]))
-                    print(distance_mean)
                     I = np.argmax(distance_mean)
                     pred = event_id_online[I]
-                    
-                    print(pred)
                     
                     msg = dict()
                     msg['type'] = 'info'
@@ -193,9 +149,7 @@ def main(ip_address,
                     msg['output'] = distance_mean
 
                     data = json.dumps(msg).encode('utf-8')
-                    msg_length = len(data)
-                    conn.send(msg_length.to_bytes(conf.length_header, byteorder='little'))
-                    conn.send(data)
+                    server.send(data, names = [client_name])
 
         except socket.timeout as e:
             print(e)
@@ -231,6 +185,7 @@ if __name__ == "__main__":
     
     main(conf.ip_address,
          conf.port,
+         conf.client_name,
          conf.length_header,
          conf.length_chunk,
          conf.clf,
