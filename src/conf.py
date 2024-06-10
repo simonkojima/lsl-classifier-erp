@@ -10,18 +10,19 @@ sys.path.append(pyerp_dir)
 
 import pyerp
 
-ip_address = socket.gethostbyname(socket.gethostname())
-port = 49154
+default_ip_address = socket.gethostbyname(socket.gethostname())
+default_port = 49154
+
 length_header = 64
-length_chunk = 2**12
+#length_chunk = 2**12
 
 client_name = "main"
 
 log_dir = os.path.join(os.path.expanduser('~'), "log", "lsl-classifier-erp")
 
 event_id = dict()
-event_id['nontarget'] = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15']
-event_id['target'] = ['101', '102', '103', '104', '105', '106', '107', '108', '109', '110', '111', '112', '113', '114', '115'] 
+event_id['nontarget'] = [str(val) for val in range(1, 31)]
+event_id['target'] = [str(val) for val in range(101, 131)] 
 
 event_id_online = event_id['nontarget']
 
@@ -36,9 +37,17 @@ ivals = [[0.0, 0.1],
          [0.8, 0.9],
          [0.9, 1.0]]
 
-fs = 250
+fs = 1000
 tmin = -0.1
 tmax = 1.0
+baseline = None
 
 clf = ShrinkageLinearDiscriminantAnalysis(n_channels=9)
 vectorizer = pyerp.EpochsVectorizer(ivals = ivals, type = 'ndarray', tmin = tmin, tmax = tmax, include_tmax = True, fs = fs)
+
+# for extracting epochs
+# used in -> main.py, extract_epochs()
+filter_range = [1, 40]
+filter_order = 2
+name_eeg_stream = 'jarvis-erp'
+name_marker_stream = 'scab-c'

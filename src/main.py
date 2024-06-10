@@ -4,6 +4,7 @@ import socket
 import datetime
 import json
 import traceback
+import argparse
 
 import pyicom as icom
 import numpy as np
@@ -11,6 +12,7 @@ import numpy as np
 from utils.std import mkdir
 from utils import log
 
+"""
 def recv_sock_split(conn, msg_length, chunk_length):
     msg = list()
     for m in range(int(msg_length/chunk_length)):
@@ -18,6 +20,8 @@ def recv_sock_split(conn, msg_length, chunk_length):
         msg.append(data)
     msg.append(conn.recv(msg_length%chunk_length).decode('utf-8'))
     return "".join(msg)[0:(msg_length)]
+"""
+
 
 def train_classifier(clf, vectorizer, epochs, events, event_id):
 
@@ -36,10 +40,45 @@ def train_classifier(clf, vectorizer, epochs, events, event_id):
     
     clf.fit(X,Y)
 
+def extract_epochs(files):
+    import pyxdf
+    import scipy
+    import conf
+    import mne
+    from utils.signal import apply_sosfilter, get_raw_from_streams
+    
+    event_id = dict()
+    for val in conf.event_id['nontarget']:
+        event_id['nontarget/%s'%val] = int(val)
+    for val in conf.event_id['target']:
+        event_id['target/%s'%val] = int(val)
+
+    epochs = list()
+    for file in files:
+        streams, header = pyxdf.load_xdf(file)
+        raw, events = get_raw_from_streams(streams, name_eeg_stream=conf.name_eeg_stream, name_marker_stream=conf.name_marker_stream)
+
+        sos = scipy.signal.butter(conf.filter_order,
+                                  np.array(conf.filter_range)/(conf.fs/2), 'bandpass', output='sos')
+        raw.apply_function(apply_sosfilter, picks = 'all', n_jobs = -1, channel_wise = True, sos=sos, zero_phase = False)
+        
+        _epochs = mne.Epochs(raw = raw,
+                            events = events,
+                            tmin = conf.tmin,
+                            tmax = conf.tmax,
+                            baseline = conf.baseline,
+                            event_id = event_id)
+        
+        epochs.append(_epochs)
+
+    epochs = mne.concatenate_epochs(epochs)
+
+    events = [str(val) for val in epochs.events[:, 2].tolist()]
+
+    return epochs, events
+
 def classification_main(icom_server,
                         client_name,
-                        length_header,
-                        length_chunk,
                         clf,
                         vectorizer,
                         event_id):    
@@ -57,12 +96,15 @@ def classification_main(icom_server,
                 if data['type'] == "epochs":
                     epochs = data['epochs']
                     events = data['events']
-                    for idx, epoch in enumerate(epochs):
-                        epoch = np.atleast_3d(np.array(epoch))
-                        epoch = np.transpose(epoch, (2,0,1))
-                        X = vectorizer.transform(epoch)
-                        val = clf.decision_function(X)
-                        distances[events[idx]].append(val)
+                    for idx, event in enumerate(events):
+                        if event in event_id:
+                            epoch = epochs[idx]
+                            epoch = np.atleast_3d(np.array(epoch))
+                            epoch = np.transpose(epoch, (2,0,1))
+                            X = vectorizer.transform(epoch)
+                            val = clf.decision_function(X)
+                            distances[event].append(val)
+                            logger.debug("epoch for event '%s' was received and classified."%str(event))
                 elif data['type'] == 'cmd':
                     if data['cmd'] == 'trial-end':
                         logger.debug("trial end")
@@ -91,8 +133,6 @@ def classification_main(icom_server,
 def main(ip_address,
          port,
          client_name,
-         length_header,
-         length_chunk,
          clf,
          vectorizer,
          event_id_train,
@@ -111,27 +151,20 @@ def main(ip_address,
     while flag[0]:
         try:
             data = server.recv(names = [client_name])[0]
+            if len(data) == 0:
+                continue
             logger.debug("recieved.")
+            print(data)
             msg_json = json.loads(data.decode('utf-8'))
             logger.debug("json was parsed")
 
             if msg_json['type'] == 'cmd':
                 if msg_json['cmd'] == 'train':
                     logger.debug("training started")
-                    #
-                    epochs = list()
-                    events = list()
-                    with open("sub-simon_epochs_training_task-asme_run-1.json", 'r') as f:
-                        data = json.load(f)
-
-                    for epoch in data['epochs']:
-                        epochs += epoch
-                        
-                    for event in data['events']:
-                        events += event
-
-                    #
-                    #train_classifier(clf, vectorizer, msg_json['epochs'], msg_json['events'], event_id_train)
+                    
+                    print(msg_json)
+                    epochs, events = extract_epochs(msg_json['files'])
+                    
                     train_classifier(clf, vectorizer, epochs, events, event_id_train)
                     logger.debug("training completed")
 
@@ -149,8 +182,6 @@ def main(ip_address,
                     logger.debug("trial is started")
                     distances = classification_main(server,
                                                     client_name,
-                                                    length_header,
-                                                    length_chunk,
                                                     clf,
                                                     vectorizer,
                                                     event_id_online)
@@ -184,29 +215,35 @@ def main(ip_address,
 if __name__ == "__main__":
 
     import conf
-    log_dir = os.path.join(os.path.expanduser('~'), "log", "lsl-classifier")
-
-    log_strftime = "%y-%m-%d"
+    
+    
+    log_strftime = "%y-%m-%d_%H-%M-%S"
     datestr =  datetime.datetime.now().strftime(log_strftime) 
     log_fname = "%s.log"%datestr
     
-    print(log_dir)
+    mkdir(conf.log_dir)
+    #if os.path.exists(os.path.join(conf.log_dir, log_fname)):
+    #    os.remove(os.path.join(conf.log_dir, log_fname))
+    log.set_logger(os.path.join(conf.log_dir, log_fname), True)
 
-    mkdir(log_dir)
-    if os.path.exists(os.path.join(conf.log_dir, log_fname)):
-        os.remove(os.path.join(conf.log_dir, log_fname))
-    log.set_logger(os.path.join(log_dir, log_fname), True)
-    
     logger = logging.getLogger(__name__)
-    logger.debug("ip address: %s"%str(conf.ip_address))
-    logger.debug("port: %s"%str(conf.port))
     
-    main(conf.ip_address,
-         conf.port,
-         conf.client_name,
-         conf.length_header,
-         conf.length_chunk,
-         conf.clf,
-         conf.vectorizer,
-         conf.event_id,
-         conf.event_id_online)
+    logger.debug("log file will be saved in %s"%str(os.path.join(conf.log_dir, log_fname)))
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--ip', type = str, default=conf.default_ip_address)
+    parser.add_argument('--port', type = int, default = conf.default_port)
+    
+    args = parser.parse_args()
+    
+    for key in vars(args).keys():
+        val = vars(args)[key]
+        logger.debug("%s: %s"%(str(key), str(val)))
+    
+    main(ip_address = args.ip,
+         port = args.port,
+         client_name = conf.client_name,
+         clf = conf.clf,
+         vectorizer = conf.vectorizer,
+         event_id_train = conf.event_id,
+         event_id_online = conf.event_id_online)
