@@ -82,6 +82,7 @@ def classification_main(icom_server,
                         clf,
                         vectorizer,
                         event_id):    
+    logger = logging.getLogger(__name__)
     flag = [True]
     distances = dict()
     for event in event_id:
@@ -96,15 +97,28 @@ def classification_main(icom_server,
                 if data['type'] == "epochs":
                     epochs = data['epochs']
                     events = data['events']
+                    logger.debug("events: %s"%str(events))
+                    logger.debug("len(epochs): %s"%str(len(epochs)))
+                    logger.debug("len(epochs[0]): %s"%str(len(epochs[0])))
+                    if events in event_id:
+                        epochs = np.atleast_3d(np.array(epochs))
+                        epochs = np.transpose(epochs, (2,0,1))
+                        logger.debug("epoch.shape: %s"%str(epochs.shape))
+                        X = vectorizer.transform(epochs)
+                        val = clf.decision_function(X)
+                        distances[events].append(val)
+                        logger.debug("epoch for event '%s' was received and classified."%str(events))
+                    """
                     for idx, event in enumerate(events):
                         if event in event_id:
-                            epoch = epochs[idx]
-                            epoch = np.atleast_3d(np.array(epoch))
-                            epoch = np.transpose(epoch, (2,0,1))
-                            X = vectorizer.transform(epoch)
+                            epochs = np.atleast_3d(np.array(epochs))
+                            epochs = np.transpose(epochs, (2,0,1))
+                            logger.debug("epoch.shape: %s"%str(epochs.shape))
+                            X = vectorizer.transform(epochs)
                             val = clf.decision_function(X)
                             distances[event].append(val)
                             logger.debug("epoch for event '%s' was received and classified."%str(event))
+                    """
                 elif data['type'] == 'cmd':
                     if data['cmd'] == 'trial-end':
                         logger.debug("trial end")
