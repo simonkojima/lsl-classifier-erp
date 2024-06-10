@@ -46,17 +46,27 @@ def extract_epochs(files):
     import conf
     import mne
     from utils.signal import apply_sosfilter, get_raw_from_streams
-    
-    event_id = dict()
-    for val in conf.event_id['nontarget']:
-        event_id['nontarget/%s'%val] = int(val)
-    for val in conf.event_id['target']:
-        event_id['target/%s'%val] = int(val)
+
+    logger = logging.getLogger(__name__)    
 
     epochs = list()
     for file in files:
         streams, header = pyxdf.load_xdf(file)
+        logger.debug("finish loading xdf file")
+        
         raw, events = get_raw_from_streams(streams, name_eeg_stream=conf.name_eeg_stream, name_marker_stream=conf.name_marker_stream)
+        logger.debug("finish constructing raw file")
+
+
+        list_events = [str(val) for val in events[:, 2].tolist()]
+        event_id = dict()
+        for val in conf.event_id['nontarget']:
+            if val in list_events:
+                event_id['nontarget/%s'%val] = int(val)
+        for val in conf.event_id['target']:
+            if val in list_events:
+                event_id['target/%s'%val] = int(val)
+        print(event_id)
 
         sos = scipy.signal.butter(conf.filter_order,
                                   np.array(conf.filter_range)/(conf.fs/2), 'bandpass', output='sos')

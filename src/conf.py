@@ -49,5 +49,6 @@ vectorizer = pyerp.EpochsVectorizer(ivals = ivals, type = 'ndarray', tmin = tmin
 # used in -> main.py, extract_epochs()
 filter_range = [1, 40]
 filter_order = 2
-name_eeg_stream = 'jarvis-erp'
+#name_eeg_stream = 'jarvis-erp'
+name_eeg_stream = "BrainAmpSeries"
 name_marker_stream = 'scab-c'

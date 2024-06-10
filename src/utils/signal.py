@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import scipy
 import mne
@@ -42,6 +43,8 @@ def get_raw_from_streams(streams, name_eeg_stream, name_marker_stream):
         events_mne.append([I, 0, event])
         
     events = np.array(events_mne)
+    
+    data = data[0:9, :]
 
     raw = mne.io.RawArray(data = data,
                           info = mne.create_info(ch_names = 9, sfreq = 1000, ch_types = 'eeg'))
