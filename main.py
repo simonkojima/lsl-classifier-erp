@@ -12,16 +12,10 @@ import numpy as np
 from utils.std import mkdir
 from utils import log
 
-"""
-def recv_sock_split(conn, msg_length, chunk_length):
-    msg = list()
-    for m in range(int(msg_length/chunk_length)):
-        data = conn.recv(chunk_length).decode('utf-8')
-        msg.append(data)
-    msg.append(conn.recv(msg_length%chunk_length).decode('utf-8'))
-    return "".join(msg)[0:(msg_length)]
-"""
-
+try:
+    import tomllib
+except:
+    import toml as tomllib
 
 def train_classifier(clf, vectorizer, epochs, events, event_id):
 
@@ -238,25 +232,29 @@ def main(ip_address,
 
 if __name__ == "__main__":
 
-    import conf
+    with open("config.toml", "r") as f:
+        config = tomllib.load(f)
+        
+    print(config)
     
+    home_dir = os.path.expanduser("~")
     
     log_strftime = "%y-%m-%d_%H-%M-%S"
     datestr =  datetime.datetime.now().strftime(log_strftime) 
     log_fname = "%s.log"%datestr
-    
-    mkdir(conf.log_dir)
+
+    mkdir(os.path.join(home_dir, config['directories']['log']))
     #if os.path.exists(os.path.join(conf.log_dir, log_fname)):
     #    os.remove(os.path.join(conf.log_dir, log_fname))
-    log.set_logger(os.path.join(conf.log_dir, log_fname), True)
+    log.set_logger(os.path.join(home_dir, config['directories']['log'], log_fname), True)
 
     logger = logging.getLogger(__name__)
     
-    logger.debug("log file will be saved in %s"%str(os.path.join(conf.log_dir, log_fname)))
+    logger.debug("log file will be saved in %s"%str(os.path.join(home_dir, config['directories']['log'], log_fname)))
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--ip', type = str, default=conf.default_ip_address)
-    parser.add_argument('--port', type = int, default = conf.default_port)
+    parser.add_argument('--ip', type = str, default = "localhost")
+    parser.add_argument('--port', type = int, default = 49154)
     
     args = parser.parse_args()
     
