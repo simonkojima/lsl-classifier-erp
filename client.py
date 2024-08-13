@@ -9,7 +9,6 @@ import pyicom as icom
 
 #sys.path.append(os.path.join(os.path.expanduser('~'), "git", "pyerp", "src"))
 #import pyerp
-import conf
 import numpy as np
 import pyxdf
 import scipy
@@ -29,10 +28,10 @@ def train(client):
                                 "Documents",
                                 "eeg",
                                 "asme-speller",
-                                "sub-tech",
+                                "sub-P99",
                                 "ses-S001",
                                 "eeg",
-                                "sub-tech_ses-S001_task-asme_run-001_eeg.xdf")]
+                                "sub-P99_ses-S001_task-asme-offline_run-001_eeg.xdf")]
     msg['files'].append(msg['files'][0])
     #msg['events'] = events
 
@@ -52,7 +51,7 @@ def train(client):
 
 def trial(client):
     
-    with open("sub-tech_epochs_training_task-asme_run-1_trial-1_epochs.json", "r") as f:
+    with open("sub-P99_epochs_training_task-asme_run-1_trial-1.json", "r") as f:
     	data = json.load(f)
 
     epochs = data['epochs']
@@ -71,9 +70,9 @@ def trial(client):
             msg['cmd'] = 'trial-start'
             client.send(json.dumps(msg).encode('utf-8'))
             
-            for idx in range(0, len(epochs)-1, 2):
-                data = [epochs[idx], epochs[idx + 1]]
-                event = [events[idx], events[idx+1]]
+            for idx in range(0, len(epochs)):
+                data = epochs[idx]
+                event = events[idx]
 
                 msg = dict()
                 msg['type'] = 'epochs'
@@ -114,15 +113,15 @@ def trial(client):
         
 if __name__ == "__main__":
 
-    ip = conf.default_ip_address
-    port = conf.default_port
+    ip = "localhost"
+    port = 49154
 
     client = icom.client(ip = ip,
-                         port = port,
-                         name = conf.client_name)
+                         port = port)
     client.connect()
 
     print("connected.")
     
-    #train(client)
+    train(client)
+    input("Press Any Key to Continue to start trial")
     trial(client)

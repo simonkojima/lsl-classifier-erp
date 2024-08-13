@@ -1,4 +1,6 @@
 import os
+import sys
+
 import logging
 import socket
 import datetime
@@ -43,12 +45,15 @@ def extract_epochs(files):
 
     logger = logging.getLogger(__name__)    
 
+    with open("config.toml", "r") as f:
+        config = tomllib.load(f)
+
     epochs = list()
     for file in files:
         streams, header = pyxdf.load_xdf(file)
         logger.debug("finish loading xdf file")
         
-        raw, events = get_raw_from_streams(streams, name_eeg_stream=conf.name_eeg_stream, name_marker_stream=conf.name_marker_stream)
+        raw, events = get_raw_from_streams(streams, name_eeg_stream=config['stream']['name_eeg_stream'], name_marker_stream=config['stream']['name_marker_stream'])
         logger.debug("finish constructing raw file")
 
 
@@ -82,10 +87,12 @@ def extract_epochs(files):
     return epochs, events
 
 def classification_main(icom_server,
-                        client_name,
                         clf,
                         vectorizer,
-                        event_id):    
+                        event_id,
+                        dynamic_stopping = False,
+                        p = 0.05,
+                        mode = "best-2nd"):    
     logger = logging.getLogger(__name__)
     flag = [True]
     distances = dict()
@@ -95,7 +102,7 @@ def classification_main(icom_server,
     while flag[0]:
         try:
             while True:
-                data = icom_server.recv(names = [client_name])[0]
+                data = icom_server.recv()
                 data = json.loads(data.decode('utf-8'))
 
                 if data['type'] == "epochs":
@@ -104,7 +111,9 @@ def classification_main(icom_server,
                     logger.debug("events: %s"%str(events))
                     logger.debug("len(epochs): %s"%str(len(epochs)))
                     logger.debug("len(epochs[0]): %s"%str(len(epochs[0])))
+                    logger.debug("event_id: %s"%str(event_id))
                     if events in event_id:
+                        # number of epochs sent by client is always one.
                         epochs = np.atleast_3d(np.array(epochs))
                         epochs = np.transpose(epochs, (2,0,1))
                         logger.debug("epoch.shape: %s"%str(epochs.shape))
@@ -112,17 +121,6 @@ def classification_main(icom_server,
                         val = clf.decision_function(X)
                         distances[events].append(val)
                         logger.debug("epoch for event '%s' was received and classified."%str(events))
-                    """
-                    for idx, event in enumerate(events):
-                        if event in event_id:
-                            epochs = np.atleast_3d(np.array(epochs))
-                            epochs = np.transpose(epochs, (2,0,1))
-                            logger.debug("epoch.shape: %s"%str(epochs.shape))
-                            X = vectorizer.transform(epochs)
-                            val = clf.decision_function(X)
-                            distances[event].append(val)
-                            logger.debug("epoch for event '%s' was received and classified."%str(event))
-                    """
                 elif data['type'] == 'cmd':
                     if data['cmd'] == 'trial-end':
                         logger.debug("trial end")
@@ -150,7 +148,6 @@ def classification_main(icom_server,
 
 def main(ip_address,
          port,
-         client_name,
          clf,
          vectorizer,
          event_id_train,
@@ -158,17 +155,16 @@ def main(ip_address,
     
     logger = logging.getLogger(__name__)
     
-    server = icom.server(ip = ip_address, port = port)
+    server = icom.server(ip = ip_address, port = port, timeout=None)
     server.start()
     print("server info. ip: %s, port: %s"%(str(ip_address), str(port)))
     logger.debug("server info. ip: %s, port: %s"%(str(ip_address), str(port)))
-    while len(server.conns) == 0:
-        pass
+    server.wait_for_connection()
     
     flag = [True]
     while flag[0]:
         try:
-            data = server.recv(names = [client_name])[0]
+            data = server.recv()
             if len(data) == 0:
                 continue
             logger.debug("recieved.")
@@ -191,7 +187,7 @@ def main(ip_address,
                     msg_json['info'] = 'training_completed'
 
                     data = json.dumps(msg_json).encode('utf-8')
-                    server.send(data, names=[client_name])
+                    server.send(data)
                     
                     logger.debug("training_completed")
                     
@@ -199,13 +195,15 @@ def main(ip_address,
                     print("trial is started")
                     logger.debug("trial is started")
                     distances = classification_main(server,
-                                                    client_name,
                                                     clf,
                                                     vectorizer,
                                                     event_id_online)
                     distance_mean = list()
                     for idx, event in enumerate(event_id_online):
-                        distance_mean.append(np.mean(distances[event]))
+                        val = np.mean(distances[event])
+                        if np.isnan(val):
+                            val = -float('inf')
+                        distance_mean.append(np.mean(val))
                     I = np.argmax(distance_mean)
                     pred = event_id_online[I]
                     
@@ -216,7 +214,7 @@ def main(ip_address,
                     msg['output'] = distance_mean
 
                     data = json.dumps(msg).encode('utf-8')
-                    server.send(data, names = [client_name])
+                    server.send(data)
 
         except socket.timeout as e:
             print(e)
@@ -235,7 +233,6 @@ if __name__ == "__main__":
     with open("config.toml", "r") as f:
         config = tomllib.load(f)
         
-    print(config)
     
     home_dir = os.path.expanduser("~")
     
@@ -261,11 +258,20 @@ if __name__ == "__main__":
     for key in vars(args).keys():
         val = vars(args)[key]
         logger.debug("%s: %s"%(str(key), str(val)))
+        
+    from toeplitzlda.classification import ShrinkageLinearDiscriminantAnalysis, ToeplitzLDA
+    clf = ShrinkageLinearDiscriminantAnalysis(n_channels=config['eeg']['n_channels'])
+
+    home_dir = os.path.expanduser('~')
+    pyerp_dir = os.path.join(home_dir, "git", "pyerp", "src")
+    sys.path.append(pyerp_dir)
+
+    import pyerp
+    vectorizer = pyerp.EpochsVectorizer(ivals = config['features']['ivals'], type = 'ndarray', tmin = config['preprocess']['tmin'], tmax = config['preprocess']['tmax'], include_tmax = True, fs = config['eeg']['fs'])
     
     main(ip_address = args.ip,
          port = args.port,
-         client_name = conf.client_name,
-         clf = conf.clf,
-         vectorizer = conf.vectorizer,
-         event_id_train = conf.event_id,
-         event_id_online = conf.event_id_online)
+         clf = clf,
+         vectorizer = vectorizer,
+         event_id_train = config['event_id']['offline'],
+         event_id_online = config['event_id']['online'])

@@ -24,6 +24,12 @@ def get_raw_from_streams(streams, name_eeg_stream, name_marker_stream):
         elif name == name_marker_stream:
             marker = stream
     
+    if eeg is None:
+        raise ValueError("'%s' was not found"%(name_eeg_stream))
+
+    if marker is None:
+        raise ValueError("'%s' was not found"%(name_marker_stream))
+    
     data = eeg['time_series'].T
     times = eeg['time_stamps']
 
