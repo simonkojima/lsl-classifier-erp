@@ -13,6 +13,7 @@ import numpy as np
 
 from utils.std import mkdir
 from utils import log
+from utils.stopping import test_distances, check_nstims
 
 try:
     import tomllib
@@ -90,14 +91,18 @@ def classification_main(icom_server,
                         clf,
                         vectorizer,
                         event_id,
-                        dynamic_stopping = False,
-                        p = 0.05,
-                        mode = "best-2nd"):    
+                        dynamic_stopping,
+                        p_th,
+                        min_nstims,
+                        alternative,
+                        mode):    
     logger = logging.getLogger(__name__)
     flag = [True]
     distances = dict()
     for event in event_id:
         distances[event] = list()
+        
+    n_epochs = 0
 
     while flag[0]:
         try:
@@ -108,6 +113,7 @@ def classification_main(icom_server,
                 if data['type'] == "epochs":
                     epochs = data['epochs']
                     events = data['events']
+                    n_epochs += 1
                     logger.debug("events: %s"%str(events))
                     logger.debug("len(epochs): %s"%str(len(epochs)))
                     logger.debug("len(epochs[0]): %s"%str(len(epochs[0])))
@@ -121,10 +127,20 @@ def classification_main(icom_server,
                         val = clf.decision_function(X)
                         distances[events].append(val)
                         logger.debug("epoch for event '%s' was received and classified."%str(events))
+
+                        if dynamic_stopping:
+                            nstims = check_nstims(distances, event_id)
+                            logger.debug("nstims: %s"%str(nstims))
+                            if nstims >= min_nstims:
+                                pred, p = test_distances(distances, event_id, method = 'mean', mode = mode, alternative = alternative)
+                                logger.debug("pred, p: %s, %s"%(str(pred), str(p)))
+                                if p < p_th:
+                                    return distances, n_epochs, pred
+                            
                 elif data['type'] == 'cmd':
                     if data['cmd'] == 'trial-end':
                         logger.debug("trial end")
-                        return distances
+                        return (distances,) # return by tuple
                 else:
                     logger.error("data['type']: %s was received"%str(data['type']))
                     continue
@@ -194,24 +210,38 @@ def main(ip_address,
                 elif msg_json['cmd'] == 'trial-start':
                     print("trial is started")
                     logger.debug("trial is started")
-                    distances = classification_main(server,
-                                                    clf,
-                                                    vectorizer,
-                                                    event_id_online)
-                    distance_mean = list()
-                    for idx, event in enumerate(event_id_online):
-                        val = np.mean(distances[event])
-                        if np.isnan(val):
-                            val = -float('inf')
-                        distance_mean.append(np.mean(val))
-                    I = np.argmax(distance_mean)
-                    pred = event_id_online[I]
-                    
+                    distances = classification_main(icom_server = server,
+                                                    clf = clf,
+                                                    vectorizer = vectorizer,
+                                                    event_id = event_id_online,
+                                                    dynamic_stopping = config['dynamic_stopping']['enable'],
+                                                    p_th = config['dynamic_stopping']['p'],
+                                                    min_nstims = config['dynamic_stopping']['min_nstims'],
+                                                    alternative = config['dynamic_stopping']['alternative'],
+                                                    mode = config['dynamic_stopping']['mode'])
+
                     msg = dict()
                     msg['type'] = 'info'
                     msg['info'] = 'classification_result'
-                    msg['pred'] = pred
-                    msg['output'] = distance_mean
+                    print(distances)
+                    print(len(distances))
+                    if len(distances) == 1:
+                        distances = distances[0]
+                        distance_mean = list()
+                        for idx, event in enumerate(event_id_online):
+                            val = np.mean(distances[event])
+                            if np.isnan(val):
+                                val = -float('inf')
+                            distance_mean.append(np.mean(val))
+                        I = np.argmax(distance_mean)
+                        pred = event_id_online[I]
+                        msg['pred'] = pred
+                        msg['output'] = distance_mean
+                    elif len(distances) == 3:
+                        distances, n_epochs, pred = distances
+                        msg['pred'] = pred
+                        msg['output'] = distances
+                        msg['n_epochs'] = n_epochs
 
                     data = json.dumps(msg).encode('utf-8')
                     server.send(data)
@@ -232,7 +262,6 @@ if __name__ == "__main__":
 
     with open("config.toml", "r") as f:
         config = tomllib.load(f)
-        
     
     home_dir = os.path.expanduser("~")
     

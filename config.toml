@@ -39,6 +39,8 @@ name_eeg_stream = "jarvis-erp"
 name_marker_stream = "scab-c"
 
 [dynamic_stopping]
-enable = True
+enable = false
 p = 0.05
+alternative = "greater"
 mode = "best-2nd"
+min_nstims = 1
