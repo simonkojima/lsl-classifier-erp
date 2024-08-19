@@ -49,10 +49,20 @@ def get_raw_from_streams(streams, name_eeg_stream, name_marker_stream):
         events_mne.append([I, 0, event])
         
     events = np.array(events_mne)
-    
-    data = data[0:9, :]
+    print(eeg['info']['desc'][0]['channels'][0]['channel'])
+    channels = eeg['info']['desc'][0]['channels'][0]['channel']
+    ch_names = [ch['label'][0] for ch in channels]
+    sfreq = float(eeg['info']['nominal_srate'][0])
 
     raw = mne.io.RawArray(data = data,
-                          info = mne.create_info(ch_names = 9, sfreq = 1000, ch_types = 'eeg'))
+                          info = mne.create_info(ch_names = ch_names, sfreq = sfreq, ch_types = 'eeg'))
     
     return raw, events
+
+if __name__ == "__main__":
+    import pyxdf
+    import os
+    import xml.etree.ElementTree as ET
+
+    streams, header = pyxdf.load_xdf(os.path.join(os.path.expanduser('~'), "Documents", "eeg", "asme-speller", "sub-P99", "ses-S001", "eeg", "sub-P99_ses-S001_task-asmeoffline_run-001_eeg.xdf"))
+    get_raw_from_streams(streams, "jarvis-erp", 'scab-c')

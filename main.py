@@ -4,9 +4,9 @@ import sys
 import logging
 import socket
 import datetime
-import json
 import traceback
 import argparse
+import msgpack
 
 import pyicom as icom
 import numpy as np
@@ -22,6 +22,7 @@ except:
 
 def train_classifier(clf, vectorizer, epochs, events, event_id):
 
+    logger = logging.getLogger(__name__)    
     epochs = np.array(epochs)
     
     Y = list()
@@ -33,14 +34,16 @@ def train_classifier(clf, vectorizer, epochs, events, event_id):
         else:
             raise ValueError("Unknown event. '%s'"%(str(event)))
     
+    logger.debug("type(epochs): %s"%str(type(epochs)))
+    logger.debug("epochs.shape: %s"%str(epochs.shape))
     X = vectorizer.transform(epochs)
+    logger.debug("X.shape: %s"%str(X.shape))
     
     clf.fit(X,Y)
 
 def extract_epochs(files):
     import pyxdf
     import scipy
-    import conf
     import mne
     from utils.signal import apply_sosfilter, get_raw_from_streams
 
@@ -51,32 +54,42 @@ def extract_epochs(files):
 
     epochs = list()
     for file in files:
+        logger.debug("start loading '%s'"%(file))
+        logging.getLogger().disabled = True
         streams, header = pyxdf.load_xdf(file)
+        logging.getLogger().disabled = False
         logger.debug("finish loading xdf file")
         
         raw, events = get_raw_from_streams(streams, name_eeg_stream=config['stream']['name_eeg_stream'], name_marker_stream=config['stream']['name_marker_stream'])
         logger.debug("finish constructing raw file")
+        logger.debug("number of channels of raw: %s"%str(len(raw.ch_names)))
+        
+        raw = raw.pick(picks = config['eeg']['channels'])
+        logger.debug("EEG channel was picked: %s"%str(config['eeg']['channels']))
 
 
         list_events = [str(val) for val in events[:, 2].tolist()]
         event_id = dict()
-        for val in conf.event_id['nontarget']:
+        for val in config['event_id']['offline']['nontarget']:
             if val in list_events:
                 event_id['nontarget/%s'%val] = int(val)
-        for val in conf.event_id['target']:
+        for val in config['event_id']['offline']['target']:
             if val in list_events:
                 event_id['target/%s'%val] = int(val)
         print(event_id)
 
-        sos = scipy.signal.butter(conf.filter_order,
-                                  np.array(conf.filter_range)/(conf.fs/2), 'bandpass', output='sos')
+        sos = scipy.signal.butter(config['preprocess']['filter_order'],
+                                  np.array(config['preprocess']['filter_range'])/(config['preprocess']['fs']/2), 'bandpass', output='sos')
         raw.apply_function(apply_sosfilter, picks = 'all', n_jobs = -1, channel_wise = True, sos=sos, zero_phase = False)
         
+        baseline = config['preprocess']['baseline']
+        if baseline is False:
+            baseline = None
         _epochs = mne.Epochs(raw = raw,
                             events = events,
-                            tmin = conf.tmin,
-                            tmax = conf.tmax,
-                            baseline = conf.baseline,
+                            tmin = config['preprocess']['tmin'],
+                            tmax = config['preprocess']['tmax'],
+                            baseline = baseline,
                             event_id = event_id)
         
         epochs.append(_epochs)
@@ -108,7 +121,8 @@ def classification_main(icom_server,
         try:
             while True:
                 data = icom_server.recv()
-                data = json.loads(data.decode('utf-8'))
+                #data = json.loads(data.decode('utf-8'))
+                data = msgpack.unpackb(data)
 
                 if data['type'] == "epochs":
                     epochs = data['epochs']
@@ -124,6 +138,7 @@ def classification_main(icom_server,
                         epochs = np.transpose(epochs, (2,0,1))
                         logger.debug("epoch.shape: %s"%str(epochs.shape))
                         X = vectorizer.transform(epochs)
+                        logger.debug("X.shape: %s"%str(X.shape))
                         val = clf.decision_function(X)
                         distances[events].append(val)
                         logger.debug("epoch for event '%s' was received and classified."%str(events))
@@ -183,16 +198,16 @@ def main(ip_address,
             data = server.recv()
             if len(data) == 0:
                 continue
-            logger.debug("recieved.")
-            print(data)
-            msg_json = json.loads(data.decode('utf-8'))
-            logger.debug("json was parsed")
+            logger.debug("received.")
+            #msg_json = json.loads(data.decode('utf-8'))
+            msg_json = msgpack.unpackb(data)
+            logger.debug("msg: %s"%str(msg_json))
 
             if msg_json['type'] == 'cmd':
                 if msg_json['cmd'] == 'train':
                     logger.debug("training started")
                     
-                    print(msg_json)
+                    logger.debug("files for training: %s"%str(msg_json['files']))
                     epochs, events = extract_epochs(msg_json['files'])
                     
                     train_classifier(clf, vectorizer, epochs, events, event_id_train)
@@ -202,7 +217,8 @@ def main(ip_address,
                     msg_json['type'] = 'info'
                     msg_json['info'] = 'training_completed'
 
-                    data = json.dumps(msg_json).encode('utf-8')
+                    #data = json.dumps(msg_json).encode('utf-8')
+                    data = msgpack.packb(msg_json)
                     server.send(data)
                     
                     logger.debug("training_completed")
@@ -223,8 +239,7 @@ def main(ip_address,
                     msg = dict()
                     msg['type'] = 'info'
                     msg['info'] = 'classification_result'
-                    print(distances)
-                    print(len(distances))
+                    logger.debug("distances: %s"%str(distances))
                     if len(distances) == 1:
                         distances = distances[0]
                         distance_mean = list()
@@ -243,7 +258,8 @@ def main(ip_address,
                         msg['output'] = distances
                         msg['n_epochs'] = n_epochs
 
-                    data = json.dumps(msg).encode('utf-8')
+                    #data = json.dumps(msg).encode('utf-8')
+                    data = msgpack.packb(msg)
                     server.send(data)
 
         except socket.timeout as e:
@@ -289,7 +305,7 @@ if __name__ == "__main__":
         logger.debug("%s: %s"%(str(key), str(val)))
         
     from toeplitzlda.classification import ShrinkageLinearDiscriminantAnalysis, ToeplitzLDA
-    clf = ShrinkageLinearDiscriminantAnalysis(n_channels=config['eeg']['n_channels'])
+    clf = ShrinkageLinearDiscriminantAnalysis(n_channels=len(config['eeg']['channels']))
 
     home_dir = os.path.expanduser('~')
     pyerp_dir = os.path.join(home_dir, "git", "pyerp", "src")
