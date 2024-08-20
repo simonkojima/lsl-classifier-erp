@@ -41,7 +41,7 @@ def train_classifier(clf, vectorizer, epochs, events, event_id):
     
     clf.fit(X,Y)
 
-def extract_epochs(files):
+def extract_epochs(files, name_marker_stream, name_eeg_stream):
     import pyxdf
     import scipy
     import mne
@@ -49,8 +49,12 @@ def extract_epochs(files):
 
     logger = logging.getLogger(__name__)    
 
-    with open("config.toml", "r") as f:
-        config = tomllib.load(f)
+    try:
+        with open("config.toml", "r") as f:
+            config = tomllib.load(f)   
+    except:
+        with open("config.toml", "rb") as f:
+            config = tomllib.load(f)   
 
     epochs = list()
     for file in files:
@@ -60,12 +64,14 @@ def extract_epochs(files):
         logging.getLogger().disabled = False
         logger.debug("finish loading xdf file")
         
-        raw, events = get_raw_from_streams(streams, name_eeg_stream=config['stream']['name_eeg_stream'], name_marker_stream=config['stream']['name_marker_stream'])
+        raw, events = get_raw_from_streams(streams, name_eeg_stream = name_eeg_stream, name_marker_stream = name_marker_stream)
         logger.debug("finish constructing raw file")
         logger.debug("number of channels of raw: %s"%str(len(raw.ch_names)))
         
         raw = raw.pick(picks = config['eeg']['channels'])
         logger.debug("EEG channel was picked: %s"%str(config['eeg']['channels']))
+        logger.debug("raw.ch_names: "%(raw.ch_names))
+        logger.debug("number of channels of channel-picked raw: %s"%str(len(raw.ch_names)))
 
 
         list_events = [str(val) for val in events[:, 2].tolist()]
@@ -182,7 +188,9 @@ def main(ip_address,
          clf,
          vectorizer,
          event_id_train,
-         event_id_online):
+         event_id_online,
+         name_marker_stream,
+         name_eeg_stream):
     
     logger = logging.getLogger(__name__)
     
@@ -208,7 +216,9 @@ def main(ip_address,
                     logger.debug("training started")
                     
                     logger.debug("files for training: %s"%str(msg_json['files']))
-                    epochs, events = extract_epochs(msg_json['files'])
+                    epochs, events = extract_epochs(msg_json['files'],
+                                                    name_eeg_stream = name_eeg_stream,
+                                                    name_marker_stream = name_marker_stream)
                     
                     train_classifier(clf, vectorizer, epochs, events, event_id_train)
                     logger.debug("training completed")
@@ -276,9 +286,13 @@ def main(ip_address,
 
 if __name__ == "__main__":
 
-    with open("config.toml", "r") as f:
-        config = tomllib.load(f)
-    
+    try:
+        with open("config.toml", "r") as f:
+            config = tomllib.load(f)   
+    except:
+        with open("config.toml", "rb") as f:
+            config = tomllib.load(f)   
+
     home_dir = os.path.expanduser("~")
     
     log_strftime = "%y-%m-%d_%H-%M-%S"
@@ -297,6 +311,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--ip', type = str, default = "localhost")
     parser.add_argument('--port', type = int, default = 49154)
+    parser.add_argument('--marker', type=str, default=config['default_stream']['marker'])
+    parser.add_argument('--signal', type=str, default=config['default_stream']['signal'])
     
     args = parser.parse_args()
     
@@ -319,4 +335,6 @@ if __name__ == "__main__":
          clf = clf,
          vectorizer = vectorizer,
          event_id_train = config['event_id']['offline'],
-         event_id_online = config['event_id']['online'])
+         event_id_online = config['event_id']['online'],
+         name_marker_stream = args.marker, 
+         name_eeg_stream = args.signal)

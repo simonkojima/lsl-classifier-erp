@@ -1,3 +1,3 @@
 conda activate classifier
-python ./main.py
+python ./main.py --marker scab-c --signal jarvis-erp
 pause
