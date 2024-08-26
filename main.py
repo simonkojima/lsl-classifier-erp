@@ -285,7 +285,7 @@ def main(ip_address,
             flag[0] = False
 
 if __name__ == "__main__":
-
+    
     try:
         with open("config.toml", "r") as f:
             config = tomllib.load(f)   
@@ -293,28 +293,31 @@ if __name__ == "__main__":
         with open("config.toml", "rb") as f:
             config = tomllib.load(f)   
 
-    home_dir = os.path.expanduser("~")
-    
-    log_strftime = "%y-%m-%d_%H-%M-%S"
-    datestr =  datetime.datetime.now().strftime(log_strftime) 
-    log_fname = "%s.log"%datestr
-
-    mkdir(os.path.join(home_dir, config['directories']['log']))
-    #if os.path.exists(os.path.join(conf.log_dir, log_fname)):
-    #    os.remove(os.path.join(conf.log_dir, log_fname))
-    log.set_logger(os.path.join(home_dir, config['directories']['log'], log_fname), True)
-
-    logger = logging.getLogger(__name__)
-    
-    logger.debug("log file will be saved in %s"%str(os.path.join(home_dir, config['directories']['log'], log_fname)))
-    
     parser = argparse.ArgumentParser()
     parser.add_argument('--ip', type = str, default = "localhost")
     parser.add_argument('--port', type = int, default = 49154)
     parser.add_argument('--marker', type=str, default=config['default_stream']['marker'])
     parser.add_argument('--signal', type=str, default=config['default_stream']['signal'])
-    
+    parser.add_argument("--log", type=str)
     args = parser.parse_args()
+
+    home_dir = os.path.expanduser("~")
+    
+    log_strftime = "%y-%m-%d_%H-%M-%S"
+    datestr =  datetime.datetime.now().strftime(log_strftime) 
+    log_fname = "lsl-classifier-erp_%s.log"%datestr
+    
+    if args.log is not None:
+        log_dir = args.log
+    else:
+        log_dir = os.path.join(os.path.expanduser("~"), config["directories"]["log"])
+
+    mkdir(log_dir)
+    log.set_logger(os.path.join(log_dir, log_fname), True)
+
+    logger = logging.getLogger(__name__)
+    
+    logger.debug("log file will be saved in %s"%str(os.path.join(log_dir, log_fname)))
     
     for key in vars(args).keys():
         val = vars(args)[key]
